@@ -107,7 +107,7 @@ if __name__ == '__main__':
 	imap_port = config.getint('imap source', 'port')
 	search_from = config.getint('imap source', 'mail_search_days')
 	google_username = config.get('google', 'username')
-	google_password = config.get('google', 'password')
+	google_password = config.get('google', 'password').encode('rot13')
 	calendar_id = config.get('google', 'calendar_id')
 
 	search_from = (datetime.datetime.now()-datetime.timedelta(search_from))
@@ -115,7 +115,6 @@ if __name__ == '__main__':
 	                            mark_read=True,
 	                            criteria=['SINCE', search_from.strftime("%d-%b-%Y")])
 	for i in events:
-		print i
 		e = save_item_if_not_already_there(google_username, google_password, i, calendar_id)
 		if e:
 			print e.get('what', '')
