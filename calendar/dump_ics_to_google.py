@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 
+## This is out of date.
+
 # pass in google account username, password, calendar id, and ics filenames.
-# pushes calendar entry into google calendar
-# (yes, this is a somewhat limited use case).
+# pushes calendar entry into google calendar (yes, this is a somewhat limited use case).
 
 import gdata.calendar.service, atom, vobject
 import getpass, imaplib, mailbox, datetime, re, os, sys
