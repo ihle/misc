@@ -52,20 +52,23 @@ def save_item_if_not_already_there(username, password, item, calendar_id='defaul
 	calendar_service.source = 'imap_to_google_calendar'
 	calendar_service.ProgrammaticLogin()
 
+	if not len(find_entry(calendar_service, calendar_id, item)):
+		# Create the event
+		google_event = add_to_google_calendar(calendar_service, item, calendar_id)
+		if google_event is not None:
+			return {'what': '[%s]: %s' % (google_event.title.text, google_event.GetHtmlLink().href)}
+	return {}
+
+def find_entry(calendar_service, calendar_id, item):
 	# check if the entry is already there
 	query = gdata.calendar.service.CalendarEventQuery(calendar_id, 'private', 'full', item.summary.value)
 	query.start_min = UTC.to_utc_str(item.dtstart.value + datetime.timedelta(hours=-1))
 	query.start_max = UTC.to_utc_str(item.dtstart.value + datetime.timedelta(hours=1))
 	feed = calendar_service.CalendarQuery(query)
 
-	# go through and check the title is the same... if yes, then don't add.
+	# Go through and check the title is the same...
 	# TODO: may need to make this check body text too.
-	if not len([f for f in feed.entry if f.title.text.strip() == item.summary.value.strip()]):
-		# Create the event
-		google_event = add_to_google_calendar(calendar_service, item, calendar_id)
-		if google_event is not None:
-			return {'what': '[%s]: %s' % (google_event.title.text, google_event.GetHtmlLink().href)}
-	return {}
+	return [f for f in feed.entry if f.title.text.strip() == item.summary.value.strip()]
 
 def add_to_google_calendar(calendar_service, item, calendar_id='default'):
 	title = imap_utils.safe_get_event_value(item, 'summary.value', 'Imported Event')
@@ -91,8 +94,12 @@ def add_to_google_calendar(calendar_service, item, calendar_id='default'):
 		# have the event last 1 hour
 		end_time = datetime.datetime.now() + datetime.timedelta(hour=1)
 
+	# http://code.google.com/apis/calendar/data/1.0/developers_guide_python.html#Reminders
 	event.when.append(gdata.calendar.When(start_time=UTC.to_utc_str(start_time),
-	                                        end_time=UTC.to_utc_str(end_time)))
+	                                        end_time=UTC.to_utc_str(end_time),
+	                                        reminder=gdata.calendar.Reminder(minutes=1, method='alert')
+	                                      ))
+
 	new_event = calendar_service.InsertEvent(event, '/calendar/feeds/%s/private/full' % calendar_id)
 
 	return new_event
