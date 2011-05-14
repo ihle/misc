@@ -30,7 +30,7 @@ def get_calendar_items(username, password, host, port=143, mark_read=True, crite
 					calendar = part.get_payload(decode=1)
 					item = vobject.readOne(calendar).vevent
 					# ignore event acceptance etc. todo: update attendance list on reciept of one of these...
-					if item.summary.value.split(":")[0] not in ['Accepted', 'Declined', 'Tentative']:
+					if item.summary.value.split(":")[0] not in ['Accepted', 'Declined', 'Tentative', 'Canceled']:
 						items.append(item)
 			except Exception:
 				pass
