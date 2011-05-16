@@ -32,6 +32,7 @@ import mailbox
 import sys
 import os
 import ConfigParser
+import time
 
 # TODO: There must be an easier way...
 class UTC(datetime.tzinfo):
@@ -100,9 +101,17 @@ def add_to_google_calendar(calendar_service, item, calendar_id='default'):
 	                                        reminder=gdata.calendar.Reminder(minutes=1, method='alert')
 	                                      ))
 
-	new_event = calendar_service.InsertEvent(event, '/calendar/feeds/%s/private/full' % calendar_id)
+	exception = None
+	for i in range(3):
+		try:
+			new_event = calendar_service.InsertEvent(event, '/calendar/feeds/%s/private/full' % calendar_id)
+			return new_event
+		except gdata.service.RequestError, e:
+			print "Got 302, trying again..."
+			exception = e
+			time.sleep(3)
 
-	return new_event
+	raise exception
 
 if __name__ == '__main__':
 	config_filename = os.path.expanduser(sys.argv[1])
