@@ -54,7 +54,7 @@ def save_item_if_not_already_there(username, password, item, calendar_id='defaul
 	calendar_service.ProgrammaticLogin()
 
 	if not len(find_entry(calendar_service, calendar_id, item)):
-		# Create the event
+		# Didn't find it, create the event
 		google_event = add_to_google_calendar(calendar_service, item, calendar_id)
 		if google_event is not None:
 			return {'what': '[%s]: %s' % (google_event.title.text, google_event.GetHtmlLink().href)}
@@ -62,13 +62,14 @@ def save_item_if_not_already_there(username, password, item, calendar_id='defaul
 
 def find_entry(calendar_service, calendar_id, item):
 	# check if the entry is already there
-	query = gdata.calendar.service.CalendarEventQuery(calendar_id, 'private', 'full', item.summary.value)
+	query = gdata.calendar.service.CalendarEventQuery(calendar_id, 'private', 'full')
 	query.start_min = UTC.to_utc_str(item.dtstart.value + datetime.timedelta(hours=-1))
 	query.start_max = UTC.to_utc_str(item.dtstart.value + datetime.timedelta(hours=1))
 	feed = calendar_service.CalendarQuery(query)
 
 	# Go through and check the title is the same...
 	# TODO: may need to make this check body text too.
+
 	return [f for f in feed.entry if f.title.text.strip() == item.summary.value.strip()]
 
 def add_to_google_calendar(calendar_service, item, calendar_id='default'):
