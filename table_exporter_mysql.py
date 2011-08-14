@@ -4,6 +4,8 @@
 # http://mysql-python.sourceforge.net/MySQLdb.html#cursor-objects
 # http://www.kitebird.com/articles/pydbapi.html
 
+# E.g. ./table_exporter_mysql.py localhost 3306 wordpress_db root wibble_password 'select * from posts'
+
 import csv
 import sys
 import MySQLdb
