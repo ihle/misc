@@ -7,7 +7,7 @@
 # E.g. extract GNUCash transactiosns to CSV:
 # http://cloud.github.com/downloads/jralls/gnucash/gnucash_erd.png
 # ./table_exporter_sqlite.py /tmp/accounts.sqlite3 \
-# "select accounts.name, post_date, (1.0*value_num/value_denom) from splits \
+# "select transaction.description, post_date, (1.0*value_num/value_denom) from splits \
 # join accounts on account_guid = accounts.guid \
 # join transactions on tx_guid = transactions.guid \
 # where accounts.name = 'Groceries'" \
