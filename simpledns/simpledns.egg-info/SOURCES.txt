@@ -1,7 +1,0 @@
-setup.py
-simple_dns.py
-simpledns.egg-info/PKG-INFO
-simpledns.egg-info/SOURCES.txt
-simpledns.egg-info/dependency_links.txt
-simpledns.egg-info/requires.txt
-simpledns.egg-info/top_level.txt
