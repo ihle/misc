@@ -83,7 +83,7 @@ class DNSProtocol(object):
 
     def create_response(self, ipaddr, msg):
         """ 
-        Create an answer for an `A` message with an answer of `ipaddr` 
+        Create an response for an `A` message with an answer of `ipaddr` 
         """
         response = dns.message.make_response(msg)
         rrset = dns.rrset.RRset(msg.question[0].name, 1, 1)
