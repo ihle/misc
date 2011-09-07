@@ -132,6 +132,7 @@ def convert_to_ip(name, dns_to_use):
     try:
         r = dns.resolver.get_default_resolver()
         r.nameservers = dns_to_use
+        r.timeout = 0.3 # drop out really quickly.
         return r.query(name)[0].to_text()
     except Exception as e:
         pass
@@ -146,7 +147,7 @@ def get_ip(domain, qtype, qclass, dns_config):
 
         # basic dns lookup using a real dns -- i.e. dns lookup for default
         >>> get_ip('ns1.level3.net', 1, 1, {'default': ['8.8.8.8']})
-        ('209.244.0.1', "DNS ['8.8.8.8'] returned ip 209.244.0.1 for host ns1.level3.net")
+        ('209.244.0.1', "['8.8.8.8'] returned ip 209.244.0.1 for host ns1.level3.net")
 
         # use a static ip for the default (i.e. no dns)
         >>> get_ip('ns1.level3.net', 1, 1, {'default': '10.10.10.10'})
@@ -162,11 +163,11 @@ def get_ip(domain, qtype, qclass, dns_config):
 
         # use a dns lookup for certain domains
         >>> get_ip('ns1.level3.net', 1, 1, {'default': '10.10.10.10', 'ns1.level3.net': ['8.8.8.8']})
-        ('209.244.0.1', "DNS ['8.8.8.8'] returned ip 209.244.0.1 for host ns1.level3.net")
+        ('209.244.0.1', "['8.8.8.8'] returned ip 209.244.0.1 for host ns1.level3.net")
 
         # use a (hostname) dns lookup for certain domains
         >>> get_ip('www.level3.net', 1, 1, {'default': ['8.8.8.8'], 'www.level3.net': ['ns1.level3.net']})
-        ('4.68.90.77', "DNS ['ns1.level3.net'] returned ip 4.68.90.77 for host www.level3.net")
+        ('4.68.90.77', "['ns1.level3.net'] returned ip 4.68.90.77 for host www.level3.net")
     """
     # ensure we have a 'default' entry.
     if not dns_config.has_key('default'):
@@ -186,11 +187,12 @@ def get_ip(domain, qtype, qclass, dns_config):
         # do a look up using the dns servers specified (convert any host names to ips first) using the provided default server
         r = dns.resolver.get_default_resolver()
         r.nameservers = [convert_to_ip(name, dns_config['default']) for name in ip_to_use]
+        r.timeout = 0.3 # drop out really quickly.
         try:
             answers = r.query(domain, rdtype=qtype, rdclass=qclass)
             for rdata in answers:
                 ip = rdata.to_text()
-                stat = 'DNS %s returned ip %s for host %s' % (ip_to_use, ip, domain)
+                stat = '%s returned ip %s for host %s' % (ip_to_use, ip, domain)
                 return ip, stat
         except Exception:
             stat = "%s couldn't resolve host %s" % (ip_to_use, domain)
@@ -213,7 +215,10 @@ class DnsHandler(SocketServer.BaseRequestHandler):
         qid, domain, qtype, qclass = parse_request(data)
         ip, status = get_ip(".".join(domain), int(qtype), int(qclass), dns_config)
 
-        print '[', time.strftime("%F %T"), ']:' , status, '(%03.1fms)' % ((time.time() - start_time) * 1000)
+        # 91 = red.
+        colour = ['\033[00m', '\033[91m'][not ip]
+        print colour + '[', time.strftime("%F %T"), ']:' , status, '(%03.1fms)' % ((time.time() - start_time) * 1000)
+
         if ip:
             status_code = 0
             ip_parts = ip.split(".")
