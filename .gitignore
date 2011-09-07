@@ -11,3 +11,5 @@ simpledns.egg-info/dependency_links.txt
 simpledns.egg-info/SOURCES.txt
 
 simpledns.egg-info/PKG-INFO
+
+bdns/req.bin
