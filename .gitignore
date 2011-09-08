@@ -1,1 +1,15 @@
 *.pyc
+
+simpledns/req.bin
+
+simpledns.egg-info/top_level.txt
+
+simpledns.egg-info/requires.txt
+
+simpledns.egg-info/dependency_links.txt
+
+simpledns.egg-info/SOURCES.txt
+
+simpledns.egg-info/PKG-INFO
+
+bdns/req.bin
