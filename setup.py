@@ -1,12 +1,12 @@
 from setuptools import setup
 
 setup(
-	name='simpledns',
+	name='bdns',
 	version='0.0001',
-	description='The Ihle DNS',
+	description="Ben's DNS",
 	author='Ben Ihle',
 	author_email='ben@not.tell.ing',
 	url='https://github.com/ihle/misc',
-	scripts=['simpledns/simpledns.py'],
+	scripts=['bdns/bdns.py'],
 	install_requires=['dnspython', 'pyyaml']
 )
