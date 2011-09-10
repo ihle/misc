@@ -53,7 +53,7 @@ class DNSProtocol(object):
             # XXX: log warning
             print >>sys.stderr, "Warning: multi-question messages " +\
                     "are not yet supported. Using default nameserver."
-            return dns.query.udp(msg, nameservers[0]).to_wire()
+            return self.forward_request(msg, nameservers)
         question = msg.question[0]
         if question.rdtype == dns.rdatatype.A:
             name = question.name.to_text()
@@ -62,8 +62,17 @@ class DNSProtocol(object):
                 return self.create_response(ipaddr, msg).to_wire()
         # let some nameserver handle the message
         # xxx: when do we use tcp? (message size-based?)
-        result = dns.query.udp(msg, nameservers[0]).to_wire()
-        return result
+        return self.forward_request(msg, nameservers)
+
+    def forward_request(self, msg, nameservers):
+        for ns in nameservers:
+            try:
+                response = dns.query.udp(msg, ns, timeout=10)
+                return response.to_wire()
+            except:
+                continue
+        # XXX: raise exception here, or return some sort of 
+        # error response to client
 
     def resolve_by_config(self, name):
         """ 
@@ -163,5 +172,6 @@ if __name__ == '__main__':
         server.serve_forever()
     except KeyboardInterrupt:
         print "Shutting down..."
-        server.shutdown()
+        server.server_close()
+
 
