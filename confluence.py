@@ -175,9 +175,9 @@ class ConfluenceDriver(object):
 
 class ConfluenceUnitTest(unittest.TestCase):
 	def setUp(self):
-		url = 'https://confluence.wotifgroup.com'
+		url = 'https://confluence.localhost'
 		self.test_page = "dev/driver+test"
-		self.driver = ConfluenceDriver('bihle', 'bihle01', url, quiet=True)
+		self.driver = ConfluenceDriver('username', 'password', url, quiet=True)
 		self.time_suffix = time.strftime('%s')
 
 	def test_view_page_returns_a_page(self):
