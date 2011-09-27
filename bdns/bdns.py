@@ -33,8 +33,14 @@ import dns.rdtypes.IN.A
 import dns.rdatatype
 import SocketServer
 from SocketServer import ThreadingMixIn, UDPServer
-import threading
 import socket
+import logging
+
+logging.basicConfig(
+    format='[%(asctime)s] %(levelname)-10s %(message)s', 
+    datefmt='%d/%m/%Y %I:%M:%S %p',
+    level=logging.INFO)
+log = logging.getLogger(__name__)
 
 CONFIGPATH = os.path.expanduser("~/dns.yml")
 
@@ -48,28 +54,40 @@ class DNSProtocol(object):
 
     def handle(self, data):
         """ Handle a dns message. """
+        with open('request.bin', 'wb') as fout:
+            fout.write(data)
         msg = dns.message.from_wire(data)
+        log.debug('[REQUEST]\n%s\n[/REQUEST]', str(msg))
         nameservers = self.config['default']
         if len(msg.question) > 1:
-            # XXX: log warning
-            print >>sys.stderr, "Warning: multi-question messages " +\
-                    "are not yet supported. Using default nameserver."
-            return self.forward_request(msg, nameservers)
+            log.warning("Warning: multi-question messages " +\
+                    "are not yet supported. Using default nameserver.")
+            return self.forward_request(msg, nameservers).to_wire()
         question = msg.question[0]
+        log.info('%-10s%-8s%s', 'Question:', msg.id, str(question))
         if question.rdtype == dns.rdatatype.A:
             name = question.name.to_text()
             ipaddr, nameservers = self.resolve_by_config(name)
             if ipaddr:
-                return self.create_response(ipaddr, msg).to_wire()
+                response = self.create_response(ipaddr, msg)
+                log.info('%-10s%-8s%s DNS: %s', 'Answer:', response.id, map(str, response.answer), '[* STATIC IP *]')
+                with open('response.bin', 'wb') as fout:
+                    fout.write(response.to_wire())
+                return response.to_wire()
+
         # let some nameserver handle the message
-        # xxx: when do we use tcp? (message size-based?)
-        return self.forward_request(msg, nameservers)
+        response = self.forward_request(msg, nameservers)
+        log.debug('[RESPONSE]\n%s\n[/RESPONSE]', str(response))
+        log.info('%-10s%-8s%s DNS: %r', 'Answer:', response.id, map(str, response.answer), nameservers)
+        return response.to_wire()
+
 
     def forward_request(self, msg, nameservers):
         for ns in nameservers:
             try:
+                # xxx: when do we use tcp? (message size-based?)
                 response = dns.query.udp(msg, ns, timeout=10)
-                return response.to_wire()
+                return response
             except:
                 continue
         # XXX: raise exception here, or return some sort of 
@@ -99,6 +117,7 @@ class DNSProtocol(object):
         """
         response = dns.message.make_response(msg)
         rrset = dns.rrset.RRset(msg.question[0].name, 1, 1)
+        rrset.ttl = 5
         rrset.add(dns.rdtypes.IN.A.A(1, 1, ipaddr))
         response.answer.append(rrset)
         return response
@@ -127,7 +146,8 @@ def isip(s):
         return False
 
 def getconfig():
-    """ Read and validate config. Also resolve any nameserver names """
+    """ Read and validate config. Also resolve any nameserver names 
+    TODO: log info on resolving dnses """
     config = yaml.load(open(CONFIGPATH))
     try:
         default_nameservers = config['default']
