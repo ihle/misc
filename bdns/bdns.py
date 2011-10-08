@@ -5,15 +5,7 @@ Simple DNS server
 for regex-based conditional domain
 resolution and forwarding.
 Place config (see below) into
-~/dns.yml
-
-Example config file: (note that [ip] is used indicate a nameserver)
-
-    $ cat ~/dns.yml
-    www.google.com: 123.34.45.56
-    .*google.com: 127.0.0.1
-    .*.mydomain.com: [10.0.0.1]
-    default: [8.8.8.8, ns1.linode.com]
+./bdns_settings.py
 
 What this does
 ~~~~~~~~~~~~~~
@@ -24,7 +16,6 @@ all other requests resolved via 8.8.8.8 and ns1.linode.com
 """
 import sys
 import time
-import yaml
 import os
 import re
 import dns.resolver
@@ -35,14 +26,13 @@ import SocketServer
 from SocketServer import ThreadingMixIn, UDPServer
 import socket
 import logging
+import imp
 
 logging.basicConfig(
     format='[%(asctime)s] %(levelname)-10s %(message)s', 
     datefmt='%d/%m/%Y %I:%M:%S %p',
     level=logging.INFO)
 log = logging.getLogger(__name__)
-
-CONFIGPATH = os.path.expanduser("~/dns.yml")
 
 class DNSProtocol(object):
     """
@@ -58,7 +48,7 @@ class DNSProtocol(object):
             fout.write(data)
         msg = dns.message.from_wire(data)
         log.debug('[REQUEST]\n%s\n[/REQUEST]', str(msg))
-        nameservers = self.config['default']
+        nameservers = self.config.default
         if len(msg.question) > 1:
             log.warning("Warning: multi-question messages " +\
                     "are not yet supported. Using default nameserver.")
@@ -100,10 +90,15 @@ class DNSProtocol(object):
         a tuple (ipaddr, [nameservers]) in which the `ipaddr` can be None
         but [nameservers] will always be non-empty.
         """
-        nameservers = self.config['default']
+        # remove trailing '.' from name, if present.
+        if name[-1] is '.':
+            name = name[:-1]
+
+        nameservers = self.config.default
         ipaddr = None
-        for regex, item in self.config.iteritems():
-            if regex != 'default' and re.search(regex, name):
+        for key, item in self.config.hosts.iteritems():
+            # TODO: hosts really should be ordered so that you can effectively override.
+            if (key == name) or (hasattr(key, 'search') and key.search(name)):
                 if isinstance(item, list):
                     nameservers = item
                 else:
@@ -126,7 +121,7 @@ class RequestHandler(SocketServer.BaseRequestHandler):
     """ handles requests and does some bad non-threadsafe config reloading """
     def handle(self):
         data, sock = self.request
-        self.server.config = reloadconfig(self.server.config) # XXX: race here!
+        self.server.config = getconfig() # XXX: race here!
         protocol = DNSProtocol(self.server.config)
         sock.sendto(protocol.handle(data), self.client_address)
 
@@ -148,15 +143,26 @@ def isip(s):
 def getconfig():
     """ Read and validate config. Also resolve any nameserver names 
     TODO: log info on resolving dnses """
-    config = yaml.load(open(CONFIGPATH))
+
     try:
-        default_nameservers = config['default']
+        fp, path, desc = imp.find_module('bdns_settings')
+        try:
+            bdns_settings = imp.load_module('bdns_settings', fp, path, desc)
+        finally:
+            if fp:
+                fp.close()
+    except ImportError:
+        log.error("Could not load bdns_settings.py. Using defaults.")
+        return {'default': '8.8.8.8'}
+
+    try:
+        default_nameservers = bdns_settings.default
     except KeyError:
-        raise ConfigException('No default nameservers found in config')
+        raise ConfigException('No "default" found in bdns_settings.py')
     for ns in default_nameservers:
         if not isip(ns):
             raise ConfigException("Bad default nameserver IP: `%s`" % ns)
-    for key, value in config.iteritems():
+    for key, value in bdns_settings.hosts.iteritems():
         if isinstance(value, list): # nameserver
             for thing in value:
                 if not isip(thing):
@@ -164,7 +170,7 @@ def getconfig():
                     resolver.nameservers = default_nameservers
                     try:
                         answer = resolver.query(thing)
-                        config[key] = [answer[0].address]
+                        bdns_settings.hosts[key] = [answer[0].address]
                     except:
                         raise ConfigException("`%s` does not look like "
                                 "an ipv4 address and does not resolve "
@@ -173,19 +179,7 @@ def getconfig():
             if not isip(value):
                 raise ConfigException("`%s` is not a valid "
                                       "ipv4 address" % value)
-    config['__mtime'] = os.stat(CONFIGPATH).st_mtime
-    return config
-
-def reloadconfig(oldconfig):
-    """ reload config if it has changed since last load """
-    config = oldconfig
-    if os.stat(CONFIGPATH).st_mtime > oldconfig['__mtime']:
-        try:
-            config = getconfig()
-            print "Config reloaded."
-        except ConfigException as e:
-            print >>sys.stderr, "bnds config has errors, not loading it: %s" % e
-    return config
+    return bdns_settings
 
 if __name__ == '__main__':
     server = Server(("0.0.0.0", 53), RequestHandler, getconfig())
