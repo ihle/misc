@@ -99,10 +99,10 @@ void main() {
 
 const SCENE_FRAG = `
 precision mediump float;
+uniform vec3 u_light;  // world-space light direction, follows the cursor
 varying vec3 v_normal;
 void main() {
-	vec3 L = normalize(vec3(0.6, 0.7, 0.5));  // fixed world-space light
-	float b = 0.38 + 0.62 * max(dot(normalize(v_normal), L), 0.0);
+	float b = 0.38 + 0.62 * max(dot(normalize(v_normal), normalize(u_light)), 0.0);
 	gl_FragColor = vec4(vec3(b), 1.0);
 }`;
 
@@ -174,6 +174,7 @@ const sceneAPos = gl.getAttribLocation(sceneProg, "a_pos");
 const sceneANormal = gl.getAttribLocation(sceneProg, "a_normal");
 const uMvp = gl.getUniformLocation(sceneProg, "u_mvp");
 const uModel = gl.getUniformLocation(sceneProg, "u_model");
+const uLight = gl.getUniformLocation(sceneProg, "u_light");
 
 const postProg = makeProgram(POST_VERT, POST_FRAG);
 const postAPos = gl.getAttribLocation(postProg, "a_pos");
@@ -280,6 +281,15 @@ function resize() {
 window.addEventListener("resize", resize);
 resize();
 
+// Light direction follows the cursor (persists where it last was): centre of
+// the page lights the cube head-on, edges swing the light around the side.
+let lightDir = [0.6, 0.7, 0.5];
+window.addEventListener("pointermove", (e) => {
+	const nx = (e.clientX / window.innerWidth) * 2 - 1;
+	const ny = 1 - (e.clientY / window.innerHeight) * 2;
+	lightDir = [nx * 1.4, ny * 1.4, 0.6];
+});
+
 gl.clearColor(0, 0, 0, 1);
 
 let start;
@@ -295,6 +305,7 @@ function frame(now) {
 	const model = mat4Mul(rotY(t * 0.4), rotX(t * 0.24));  // slow tumble
 	gl.uniformMatrix4fv(uModel, false, model);
 	gl.uniformMatrix4fv(uMvp, false, mat4Mul(proj, mat4Mul(view, model)));
+	gl.uniform3fv(uLight, lightDir);
 	gl.bindBuffer(gl.ARRAY_BUFFER, cubeVbo);
 	gl.enableVertexAttribArray(sceneAPos);
 	gl.vertexAttribPointer(sceneAPos, 3, gl.FLOAT, false, 24, 0);
