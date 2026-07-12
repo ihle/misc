@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>screenshot me</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #000;
+    overflow: hidden;
+  }
+  canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+  }
+
+  /* Photosensitivity warning gate */
+  #gate {
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1.4rem;
+    padding: 2rem;
+    box-sizing: border-box;
+    background: #000;
+    color: #eee;
+    font: 400 1rem/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+    text-align: center;
+  }
+  #gate h1 {
+    margin: 0;
+    font-size: 1.15rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
+  #gate p {
+    margin: 0;
+    max-width: 34rem;
+    color: #aaa;
+    font-size: 0.95rem;
+  }
+  #gate button {
+    margin-top: 0.4rem;
+    padding: 0.7rem 1.6rem;
+    background: #fff;
+    color: #000;
+    border: 0;
+    border-radius: 2px;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  #gate button:focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: 3px;
+  }
+  #gate.hidden { display: none; }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<div id="gate" role="dialog" aria-modal="true" aria-labelledby="gate-title">
+  <h1 id="gate-title">Photosensitivity warning</h1>
+  <p>This page fills the screen with rapidly flashing black-and-white static. It may not be safe for people with photosensitive epilepsy or migraine sensitivity. The flashing starts only when you continue.</p>
+  <button id="gate-start" type="button">Continue</button>
+</div>
+
+<script>
+"use strict";
+
+const TEXT = "screenshot me 📸";
+
+const canvas = document.getElementById("gl");
+const gl = canvas.getContext("webgl", { antialias: false, preserveDrawingBuffer: false });
+if (!gl) {
+  document.body.innerHTML = "<p style='color:#fff;font:16px sans-serif;padding:1em'>WebGL not available.</p>";
+  throw new Error("no webgl");
+}
+
+// --- Offscreen 2D canvas that holds the source brightness map (white text on black) ---
+const textCanvas = document.createElement("canvas");
+const tctx = textCanvas.getContext("2d");
+
+// --- Shaders ---
+const VERT = `
+attribute vec2 a_pos;
+void main() {
+  gl_Position = vec4(a_pos, 0.0, 1.0);
+}`;
+
+// Cycling-noise shader:
+//  - sample the text texture to get a per-pixel brightness b
+//  - b drives an update RATE: background (b=0) is a frozen static field,
+//    text pixels (b~1) re-randomize ~every frame.
+//  - any single frame is just random black/white blocks everywhere -> looks
+//    like TV static and screenshots as static. The eye reads the text because
+//    it is the region that is *moving*.
+const FRAG = `
+precision highp float;
+uniform sampler2D u_text;
+uniform vec2  u_resolution;
+uniform float u_time;
+
+// cheap 3D hash -> [0,1]
+float hash(vec3 p) {
+  p = fract(p * 0.3183099 + 0.1);
+  p *= 17.0;
+  return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+
+const float BLOCK = 3.0;    // size of each static "speckle" in device px
+const float MINRATE = 1.5;  // ticks/sec for the background (slow churn)
+const float MAXRATE = 22.0; // ticks/sec for the brightest pixels
+
+void main() {
+  vec2 uv = gl_FragCoord.xy / u_resolution;
+  vec3 src = texture2D(u_text, uv).rgb;
+  float b = max(max(src.r, src.g), src.b);   // brightness of source
+
+  // chunky noise cells so the static is visible, not sub-pixel
+  vec2 cell = floor(gl_FragCoord.xy / BLOCK);
+
+  // brighter -> faster re-randomization. Even the background (b=0) cycles at
+  // MINRATE, so the whole field slowly churns; text boils ~15x faster on top.
+  float rate = MINRATE + b * b * (MAXRATE - MINRATE);
+  float tick = floor(u_time * rate);
+
+  float v = step(0.5, hash(vec3(cell, tick)));  // binary black/white static
+  gl_FragColor = vec4(vec3(v), 1.0);
+}`;
+
+function compile(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+    throw new Error(gl.getShaderInfoLog(s));
+  }
+  return s;
+}
+
+const prog = gl.createProgram();
+gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
+gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
+gl.linkProgram(prog);
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+  throw new Error(gl.getProgramInfoLog(prog));
+}
+gl.useProgram(prog);
+
+// Fullscreen triangle
+const buf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+const aPos = gl.getAttribLocation(prog, "a_pos");
+gl.enableVertexAttribArray(aPos);
+gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+const uText = gl.getUniformLocation(prog, "u_text");
+const uRes = gl.getUniformLocation(prog, "u_resolution");
+const uTime = gl.getUniformLocation(prog, "u_time");
+
+// Texture that receives the rendered text
+const tex = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, tex);
+gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true); // so screen-bottom maps to canvas-bottom (text upright)
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+gl.uniform1i(uText, 0);
+
+function drawText(w, h) {
+  textCanvas.width = w;
+  textCanvas.height = h;
+
+  tctx.fillStyle = "#000";
+  tctx.fillRect(0, 0, w, h);
+  tctx.fillStyle = "#fff";
+  tctx.textAlign = "center";
+  tctx.textBaseline = "middle";
+
+  // Size the font so the string spans ~90% of the width.
+  const target = w * 0.9;
+  let size = 200;
+  tctx.font = `bold ${size}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+  const measured = tctx.measureText(TEXT).width;
+  size = Math.max(12, size * (target / measured));
+  // Don't let it get taller than the viewport.
+  size = Math.min(size, h * 0.55);
+  tctx.font = `bold ${size}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+
+  tctx.fillText(TEXT, w / 2, h / 2);
+
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, textCanvas);
+}
+
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.floor(window.innerWidth * dpr);
+  const h = Math.floor(window.innerHeight * dpr);
+  canvas.width = w;
+  canvas.height = h;
+  gl.viewport(0, 0, w, h);
+  gl.uniform2f(uRes, w, h);
+  drawText(w, h);
+}
+
+window.addEventListener("resize", resize);
+resize();
+
+const start = performance.now();
+function frame(now) {
+  gl.uniform1f(uTime, (now - start) / 1000);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  requestAnimationFrame(frame);
+}
+
+// Don't flash anything until the person acknowledges the warning.
+const gate = document.getElementById("gate");
+const gateStart = document.getElementById("gate-start");
+
+// If the user prefers reduced motion, make that the default framing.
+if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+  gateStart.textContent = "Continue anyway";
+}
+
+function begin() {
+  gate.classList.add("hidden");
+  requestAnimationFrame(frame);
+}
+gateStart.addEventListener("click", begin);
+gateStart.focus();
+
+</script>
+</body>
+</html>
