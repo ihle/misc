@@ -5,115 +5,130 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>screenshot me</title>
 <style>
-  html, body {
-    margin: 0;
-    height: 100%;
-    background: #000;
-    overflow: hidden;
-  }
-  canvas {
-    display: block;
-    width: 100vw;
-    height: 100vh;
-  }
+	html, body {
+		margin: 0;
+		height: 100%;
+		background: #000;
+		overflow: hidden;
+	}
+	canvas {
+		display: block;
+		width: 100vw;
+		height: 100vh;
+	}
 
-  /* Photosensitivity warning gate */
-  #gate {
-    position: fixed;
-    inset: 0;
-    z-index: 10;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 1.4rem;
-    padding: 2rem;
-    box-sizing: border-box;
-    background: #000;
-    color: #eee;
-    font: 400 1rem/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
-    text-align: center;
-  }
-  #gate h1 {
-    margin: 0;
-    font-size: 1.15rem;
-    font-weight: 600;
-    letter-spacing: 0.01em;
-  }
-  #gate p {
-    margin: 0;
-    max-width: 34rem;
-    color: #aaa;
-    font-size: 0.95rem;
-  }
-  #gate button {
-    margin-top: 0.4rem;
-    padding: 0.7rem 1.6rem;
-    background: #fff;
-    color: #000;
-    border: 0;
-    border-radius: 2px;
-    font: inherit;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  #gate button:focus-visible {
-    outline: 2px solid #fff;
-    outline-offset: 3px;
-  }
-  #gate.hidden { display: none; }
+	/* Photosensitivity warning gate */
+	#gate {
+		position: fixed;
+		inset: 0;
+		z-index: 10;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 1.4rem;
+		padding: 2rem;
+		box-sizing: border-box;
+		background: #000;
+		color: #eee;
+		font: 400 1rem/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+		text-align: center;
+	}
+	#gate h1 {
+		margin: 0;
+		font-size: 1.15rem;
+		font-weight: 600;
+		letter-spacing: 0.01em;
+	}
+	#gate p {
+		margin: 0;
+		max-width: 34rem;
+		color: #aaa;
+		font-size: 0.95rem;
+	}
+	#gate button {
+		margin-top: 0.4rem;
+		padding: 0.7rem 1.6rem;
+		background: #fff;
+		color: #000;
+		border: 0;
+		border-radius: 2px;
+		font: inherit;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	#gate button:focus-visible {
+		outline: 2px solid #fff;
+		outline-offset: 3px;
+	}
+	#gate.hidden { display: none; }
 </style>
 </head>
 <body>
 <canvas id="gl"></canvas>
 
 <div id="gate" role="dialog" aria-modal="true" aria-labelledby="gate-title">
-  <h1 id="gate-title">Photosensitivity warning</h1>
-  <p>This page fills the screen with rapidly flashing black-and-white static. It may not be safe for people with photosensitive epilepsy or migraine sensitivity. The flashing starts only when you continue.</p>
-  <button id="gate-start" type="button">Continue</button>
+	<h1 id="gate-title">Photosensitivity warning</h1>
+	<p>This page fills the screen with rapidly flashing black-and-white static. It may not be safe for people with photosensitive epilepsy or migraine sensitivity. The flashing starts only when you continue.</p>
+	<button id="gate-start" type="button">Continue</button>
 </div>
 
 <script>
 "use strict";
 
-const TEXT = "screenshot me 📸";
-
 const canvas = document.getElementById("gl");
 const gl = canvas.getContext("webgl", { antialias: false, preserveDrawingBuffer: false });
 if (!gl) {
-  document.body.innerHTML = "<p style='color:#fff;font:16px sans-serif;padding:1em'>WebGL not available.</p>";
-  throw new Error("no webgl");
+	document.body.innerHTML = "<p style='color:#fff;font:16px sans-serif;padding:1em'>WebGL not available.</p>";
+	throw new Error("no webgl");
 }
 
-// --- Offscreen 2D canvas that holds the source brightness map (white text on black) ---
-const textCanvas = document.createElement("canvas");
-const tctx = textCanvas.getContext("2d");
-
-// --- Shaders ---
-const VERT = `
-attribute vec2 a_pos;
+// --- Pass 1: a Lambert-shaded grayscale cube rendered into an offscreen FBO.
+// Its brightness (0 background .. 1 lit face) is the signal for pass 2.
+const SCENE_VERT = `
+attribute vec3 a_pos;
+attribute vec3 a_normal;
+uniform mat4 u_mvp;
+uniform mat4 u_model;
+varying vec3 v_normal;
 void main() {
-  gl_Position = vec4(a_pos, 0.0, 1.0);
+	gl_Position = u_mvp * vec4(a_pos, 1.0);
+	// model is rotation-only, so it transforms normals directly
+	v_normal = (u_model * vec4(a_normal, 0.0)).xyz;
 }`;
 
-// Cycling-noise shader:
-//  - sample the text texture to get a per-pixel brightness b
-//  - b drives an update RATE: background (b=0) is a frozen static field,
-//    text pixels (b~1) re-randomize ~every frame.
-//  - any single frame is just random black/white blocks everywhere -> looks
-//    like TV static and screenshots as static. The eye reads the text because
-//    it is the region that is *moving*.
-const FRAG = `
+const SCENE_FRAG = `
+precision mediump float;
+varying vec3 v_normal;
+void main() {
+	vec3 L = normalize(vec3(0.6, 0.7, 0.5));  // fixed world-space light
+	float b = 0.38 + 0.62 * max(dot(normalize(v_normal), L), 0.0);
+	gl_FragColor = vec4(vec3(b), 1.0);
+}`;
+
+// --- Pass 2: cycling-noise post-process over a fullscreen triangle.
+//  - per-pixel brightness b from the FBO drives an update RATE: the black
+//    background churns slowly, lit faces re-randomize ~15x faster.
+//  - any single frame is just random black/white blocks everywhere -> a
+//    screenshot is uniform static. The eye reads the cube because it is
+//    the region that is *moving*.
+const POST_VERT = `
+attribute vec2 a_pos;
+void main() {
+	gl_Position = vec4(a_pos, 0.0, 1.0);
+}`;
+
+const POST_FRAG = `
 precision highp float;
-uniform sampler2D u_text;
+uniform sampler2D u_scene;
 uniform vec2  u_resolution;
 uniform float u_time;
 
 // cheap 3D hash -> [0,1]
 float hash(vec3 p) {
-  p = fract(p * 0.3183099 + 0.1);
-  p *= 17.0;
-  return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+	p = fract(p * 0.3183099 + 0.1);
+	p *= 17.0;
+	return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
 }
 
 const float BLOCK = 3.0;    // size of each static "speckle" in device px
@@ -121,108 +136,188 @@ const float MINRATE = 1.5;  // ticks/sec for the background (slow churn)
 const float MAXRATE = 22.0; // ticks/sec for the brightest pixels
 
 void main() {
-  vec2 uv = gl_FragCoord.xy / u_resolution;
-  vec3 src = texture2D(u_text, uv).rgb;
-  float b = max(max(src.r, src.g), src.b);   // brightness of source
+	vec2 uv = gl_FragCoord.xy / u_resolution;
+	float b = texture2D(u_scene, uv).r;  // scene is grayscale
 
-  // chunky noise cells so the static is visible, not sub-pixel
-  vec2 cell = floor(gl_FragCoord.xy / BLOCK);
+	// chunky noise cells so the static is visible, not sub-pixel
+	vec2 cell = floor(gl_FragCoord.xy / BLOCK);
 
-  // brighter -> faster re-randomization. Even the background (b=0) cycles at
-  // MINRATE, so the whole field slowly churns; text boils ~15x faster on top.
-  float rate = MINRATE + b * b * (MAXRATE - MINRATE);
-  float tick = floor(u_time * rate);
+	float rate = MINRATE + b * b * (MAXRATE - MINRATE);
+	float tick = floor(u_time * rate);
 
-  float v = step(0.5, hash(vec3(cell, tick)));  // binary black/white static
-  gl_FragColor = vec4(vec3(v), 1.0);
+	float v = step(0.5, hash(vec3(cell, tick)));  // binary black/white static
+	gl_FragColor = vec4(vec3(v), 1.0);
 }`;
 
-function compile(type, src) {
-  const s = gl.createShader(type);
-  gl.shaderSource(s, src);
-  gl.compileShader(s);
-  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
-    throw new Error(gl.getShaderInfoLog(s));
-  }
-  return s;
+function makeProgram(vertSrc, fragSrc) {
+	function compile(type, src) {
+		const s = gl.createShader(type);
+		gl.shaderSource(s, src);
+		gl.compileShader(s);
+		if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+			throw new Error(gl.getShaderInfoLog(s));
+		}
+		return s;
+	}
+	const p = gl.createProgram();
+	gl.attachShader(p, compile(gl.VERTEX_SHADER, vertSrc));
+	gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fragSrc));
+	gl.linkProgram(p);
+	if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+		throw new Error(gl.getProgramInfoLog(p));
+	}
+	return p;
 }
 
-const prog = gl.createProgram();
-gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
-gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
-gl.linkProgram(prog);
-if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
-  throw new Error(gl.getProgramInfoLog(prog));
+const sceneProg = makeProgram(SCENE_VERT, SCENE_FRAG);
+const sceneAPos = gl.getAttribLocation(sceneProg, "a_pos");
+const sceneANormal = gl.getAttribLocation(sceneProg, "a_normal");
+const uMvp = gl.getUniformLocation(sceneProg, "u_mvp");
+const uModel = gl.getUniformLocation(sceneProg, "u_model");
+
+const postProg = makeProgram(POST_VERT, POST_FRAG);
+const postAPos = gl.getAttribLocation(postProg, "a_pos");
+const uRes = gl.getUniformLocation(postProg, "u_resolution");
+const uTime = gl.getUniformLocation(postProg, "u_time");
+gl.useProgram(postProg);
+gl.uniform1i(gl.getUniformLocation(postProg, "u_scene"), 0);
+
+// --- Column-major mat4 helpers ---
+function mat4Mul(a, b) {
+	const o = new Float32Array(16);
+	for (let c = 0; c < 4; c++) {
+		for (let r = 0; r < 4; r++) {
+			o[c * 4 + r] =
+				a[r] * b[c * 4] +
+				a[4 + r] * b[c * 4 + 1] +
+				a[8 + r] * b[c * 4 + 2] +
+				a[12 + r] * b[c * 4 + 3];
+		}
+	}
+	return o;
 }
-gl.useProgram(prog);
+function perspective(fovYRad, aspect, near, far) {
+	const f = 1 / Math.tan(fovYRad / 2);
+	const nf = 1 / (near - far);
+	return new Float32Array([
+		f / aspect, 0, 0, 0,
+		0, f, 0, 0,
+		0, 0, (far + near) * nf, -1,
+		0, 0, 2 * far * near * nf, 0,
+	]);
+}
+function rotX(a) {
+	const c = Math.cos(a), s = Math.sin(a);
+	return new Float32Array([1, 0, 0, 0, 0, c, s, 0, 0, -s, c, 0, 0, 0, 0, 1]);
+}
+function rotY(a) {
+	const c = Math.cos(a), s = Math.sin(a);
+	return new Float32Array([c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, 0, 0, 1]);
+}
+const view = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -2.5, 1]);
+
+// --- Cube geometry: 24 vertices (4 per face, flat normals), interleaved pos+normal ---
+const verts = [];
+const idx = [];
+[[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]].forEach((n, f) => {
+	const t = [n[1], n[2], n[0]];  // cyclic shift of an axis-aligned normal is perpendicular
+	const bt = [
+		n[1] * t[2] - n[2] * t[1],
+		n[2] * t[0] - n[0] * t[2],
+		n[0] * t[1] - n[1] * t[0],
+	];
+	for (const [s, r] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+		verts.push(
+			0.5 * (n[0] + s * t[0] + r * bt[0]),
+			0.5 * (n[1] + s * t[1] + r * bt[1]),
+			0.5 * (n[2] + s * t[2] + r * bt[2]),
+			n[0], n[1], n[2],
+		);
+	}
+	idx.push(f * 4, f * 4 + 1, f * 4 + 2, f * 4, f * 4 + 2, f * 4 + 3);
+});
+
+const cubeVbo = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, cubeVbo);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verts), gl.STATIC_DRAW);
+const cubeIbo = gl.createBuffer();
+gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, cubeIbo);
+gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(idx), gl.STATIC_DRAW);
 
 // Fullscreen triangle
-const buf = gl.createBuffer();
-gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+const triVbo = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, triVbo);
 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-const aPos = gl.getAttribLocation(prog, "a_pos");
-gl.enableVertexAttribArray(aPos);
-gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
-const uText = gl.getUniformLocation(prog, "u_text");
-const uRes = gl.getUniformLocation(prog, "u_resolution");
-const uTime = gl.getUniformLocation(prog, "u_time");
-
-// Texture that receives the rendered text
-const tex = gl.createTexture();
-gl.bindTexture(gl.TEXTURE_2D, tex);
-gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true); // so screen-bottom maps to canvas-bottom (text upright)
+// --- Offscreen framebuffer the cube renders into ---
+const sceneTex = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, sceneTex);
 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-gl.uniform1i(uText, 0);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+const depthRb = gl.createRenderbuffer();
+gl.bindRenderbuffer(gl.RENDERBUFFER, depthRb);  // must be bound once before attaching
+const fbo = gl.createFramebuffer();
+gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, sceneTex, 0);
+gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depthRb);
+gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
-function drawText(w, h) {
-  textCanvas.width = w;
-  textCanvas.height = h;
-
-  tctx.fillStyle = "#000";
-  tctx.fillRect(0, 0, w, h);
-  tctx.fillStyle = "#fff";
-  tctx.textAlign = "center";
-  tctx.textBaseline = "middle";
-
-  // Size the font so the string spans ~90% of the width.
-  const target = w * 0.9;
-  let size = 200;
-  tctx.font = `bold ${size}px system-ui, -apple-system, "Segoe UI", sans-serif`;
-  const measured = tctx.measureText(TEXT).width;
-  size = Math.max(12, size * (target / measured));
-  // Don't let it get taller than the viewport.
-  size = Math.min(size, h * 0.55);
-  tctx.font = `bold ${size}px system-ui, -apple-system, "Segoe UI", sans-serif`;
-
-  tctx.fillText(TEXT, w / 2, h / 2);
-
-  gl.bindTexture(gl.TEXTURE_2D, tex);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, textCanvas);
-}
-
+let W = 0, H = 0, proj;
 function resize() {
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const w = Math.floor(window.innerWidth * dpr);
-  const h = Math.floor(window.innerHeight * dpr);
-  canvas.width = w;
-  canvas.height = h;
-  gl.viewport(0, 0, w, h);
-  gl.uniform2f(uRes, w, h);
-  drawText(w, h);
+	const dpr = Math.min(window.devicePixelRatio || 1, 2);
+	W = Math.max(1, Math.floor(window.innerWidth * dpr));
+	H = Math.max(1, Math.floor(window.innerHeight * dpr));
+	canvas.width = W;
+	canvas.height = H;
+	gl.bindTexture(gl.TEXTURE_2D, sceneTex);
+	gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+	gl.bindRenderbuffer(gl.RENDERBUFFER, depthRb);
+	gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, W, H);
+	proj = perspective(50 * Math.PI / 180, W / H, 0.1, 10);
 }
-
 window.addEventListener("resize", resize);
 resize();
 
-const start = performance.now();
+gl.clearColor(0, 0, 0, 1);
+
+let start;
 function frame(now) {
-  gl.uniform1f(uTime, (now - start) / 1000);
-  gl.drawArrays(gl.TRIANGLES, 0, 3);
-  requestAnimationFrame(frame);
+	const t = (now - start) / 1000;
+
+	// Pass 1: cube -> FBO
+	gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+	gl.viewport(0, 0, W, H);
+	gl.enable(gl.DEPTH_TEST);
+	gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+	gl.useProgram(sceneProg);
+	const model = mat4Mul(rotY(t * 0.4), rotX(t * 0.24));  // slow tumble
+	gl.uniformMatrix4fv(uModel, false, model);
+	gl.uniformMatrix4fv(uMvp, false, mat4Mul(proj, mat4Mul(view, model)));
+	gl.bindBuffer(gl.ARRAY_BUFFER, cubeVbo);
+	gl.enableVertexAttribArray(sceneAPos);
+	gl.vertexAttribPointer(sceneAPos, 3, gl.FLOAT, false, 24, 0);
+	gl.enableVertexAttribArray(sceneANormal);
+	gl.vertexAttribPointer(sceneANormal, 3, gl.FLOAT, false, 24, 12);
+	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, cubeIbo);
+	gl.drawElements(gl.TRIANGLES, idx.length, gl.UNSIGNED_SHORT, 0);
+	gl.disableVertexAttribArray(sceneANormal);
+
+	// Pass 2: cycling noise -> screen
+	gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+	gl.viewport(0, 0, W, H);
+	gl.disable(gl.DEPTH_TEST);
+	gl.useProgram(postProg);
+	gl.bindTexture(gl.TEXTURE_2D, sceneTex);
+	gl.uniform2f(uRes, W, H);
+	gl.uniform1f(uTime, t);
+	gl.bindBuffer(gl.ARRAY_BUFFER, triVbo);
+	gl.enableVertexAttribArray(postAPos);
+	gl.vertexAttribPointer(postAPos, 2, gl.FLOAT, false, 0, 0);
+	gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+	requestAnimationFrame(frame);
 }
 
 // Don't flash anything until the person acknowledges the warning.
@@ -231,12 +326,13 @@ const gateStart = document.getElementById("gate-start");
 
 // If the user prefers reduced motion, make that the default framing.
 if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-  gateStart.textContent = "Continue anyway";
+	gateStart.textContent = "Continue anyway";
 }
 
 function begin() {
-  gate.classList.add("hidden");
-  requestAnimationFrame(frame);
+	gate.classList.add("hidden");
+	start = performance.now();
+	requestAnimationFrame(frame);
 }
 gateStart.addEventListener("click", begin);
 gateStart.focus();
