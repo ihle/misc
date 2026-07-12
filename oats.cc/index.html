@@ -69,7 +69,7 @@
 
 <div id="gate" role="dialog" aria-modal="true" aria-labelledby="gate-title">
 	<h1 id="gate-title">Photosensitivity warning</h1>
-	<p>This page fills the screen with rapidly flashing black-and-white static. It may not be safe for people with photosensitive epilepsy or migraine sensitivity. The flashing starts only when you continue.</p>
+	<p>This page fills the screen with rapidly flashing coloured static. It may not be safe for people with photosensitive epilepsy or migraine sensitivity. The flashing starts only when you continue.</p>
 	<button id="gate-start" type="button">Continue</button>
 </div>
 
@@ -83,8 +83,9 @@ if (!gl) {
 	throw new Error("no webgl");
 }
 
-// --- Pass 1: a Lambert-shaded grayscale cube rendered into an offscreen FBO.
-// Its brightness (0 background .. 1 lit face) is the signal for pass 2.
+// --- Pass 1: a Lambert-shaded cube rendered into an offscreen FBO, lit by
+// three coloured lights (pure R, G, B) 120 degrees apart. Each colour channel
+// (0 background .. 1 lit face) is an independent signal for pass 2.
 const SCENE_VERT = `
 attribute vec3 a_pos;
 attribute vec3 a_normal;
@@ -99,19 +100,24 @@ void main() {
 
 const SCENE_FRAG = `
 precision mediump float;
-uniform vec3 u_light;  // world-space light direction, follows the cursor
+uniform mat3 u_lights;  // columns: unit world-space directions of the R, G, B lights
 varying vec3 v_normal;
 void main() {
-	float b = 0.38 + 0.62 * max(dot(normalize(v_normal), normalize(u_light)), 0.0);
-	gl_FragColor = vec4(vec3(b), 1.0);
+	vec3 n = normalize(v_normal);
+	vec3 b = 0.38 + 0.62 * vec3(
+		max(dot(n, u_lights[0]), 0.0),
+		max(dot(n, u_lights[1]), 0.0),
+		max(dot(n, u_lights[2]), 0.0));
+	gl_FragColor = vec4(b, 1.0);
 }`;
 
 // --- Pass 2: cycling-noise post-process over a fullscreen triangle.
-//  - per-pixel brightness b from the FBO drives an update RATE: the black
-//    background churns slowly, lit faces re-randomize ~15x faster.
-//  - any single frame is just random black/white blocks everywhere -> a
-//    screenshot is uniform static. The eye reads the cube because it is
-//    the region that is *moving*.
+//  - each colour channel from the FBO drives its own update RATE: the black
+//    background churns slowly, a face lit by the red light re-randomizes its
+//    red channel ~15x faster, and so on.
+//  - each channel is still 50/50 noise regardless of rate, so any single
+//    frame is uniform RGB confetti -> a screenshot shows no cube. The eye
+//    reads the cube (and its colours) from what is *moving*.
 const POST_VERT = `
 attribute vec2 a_pos;
 void main() {
@@ -137,16 +143,21 @@ const float MAXRATE = 22.0; // ticks/sec for the brightest pixels
 
 void main() {
 	vec2 uv = gl_FragCoord.xy / u_resolution;
-	float b = texture2D(u_scene, uv).r;  // scene is grayscale
+	vec3 src = texture2D(u_scene, uv).rgb;
 
 	// chunky noise cells so the static is visible, not sub-pixel
 	vec2 cell = floor(gl_FragCoord.xy / BLOCK);
 
-	float rate = MINRATE + b * b * (MAXRATE - MINRATE);
-	float tick = floor(u_time * rate);
+	vec3 rate = MINRATE + src * src * (MAXRATE - MINRATE);
+	vec3 tick = floor(u_time * rate);
 
-	float v = step(0.5, hash(vec3(cell, tick)));  // binary black/white static
-	gl_FragColor = vec4(vec3(v), 1.0);
+	// binary static per channel; ticks are integers, so the fractional
+	// offsets keep the three channels decorrelated
+	vec3 v = vec3(
+		step(0.5, hash(vec3(cell, tick.r))),
+		step(0.5, hash(vec3(cell, tick.g + 0.37))),
+		step(0.5, hash(vec3(cell, tick.b + 0.71))));
+	gl_FragColor = vec4(v, 1.0);
 }`;
 
 function makeProgram(vertSrc, fragSrc) {
@@ -174,7 +185,7 @@ const sceneAPos = gl.getAttribLocation(sceneProg, "a_pos");
 const sceneANormal = gl.getAttribLocation(sceneProg, "a_normal");
 const uMvp = gl.getUniformLocation(sceneProg, "u_mvp");
 const uModel = gl.getUniformLocation(sceneProg, "u_model");
-const uLight = gl.getUniformLocation(sceneProg, "u_light");
+const uLights = gl.getUniformLocation(sceneProg, "u_lights");
 
 const postProg = makeProgram(POST_VERT, POST_FRAG);
 const postAPos = gl.getAttribLocation(postProg, "a_pos");
@@ -281,13 +292,24 @@ function resize() {
 window.addEventListener("resize", resize);
 resize();
 
-// Light direction follows the cursor (persists where it last was): centre of
-// the page lights the cube head-on, edges swing the light around the side.
-let lightDir = [0.6, 0.7, 0.5];
+// R, G, B lights sit 120 degrees apart on a ring around the view axis. The
+// cursor angle spins the ring; distance from page centre tilts the lights
+// sideways (centre = all three head-on = white light, edge = full colour
+// separation). Persists where the pointer last was.
+const lights = new Float32Array(9);
+function aimLights(nx, ny) {
+	const theta = Math.atan2(ny, nx);
+	const phi = Math.min(1, Math.hypot(nx, ny)) * 1.2;  // tilt away from view axis
+	for (let k = 0; k < 3; k++) {
+		const a = theta + k * 2 * Math.PI / 3;
+		lights[k * 3] = Math.cos(a) * Math.sin(phi);
+		lights[k * 3 + 1] = Math.sin(a) * Math.sin(phi);
+		lights[k * 3 + 2] = Math.cos(phi);
+	}
+}
+aimLights(0.35, 0.6);  // pleasant default before the pointer first moves
 window.addEventListener("pointermove", (e) => {
-	const nx = (e.clientX / window.innerWidth) * 2 - 1;
-	const ny = 1 - (e.clientY / window.innerHeight) * 2;
-	lightDir = [nx * 1.4, ny * 1.4, 0.6];
+	aimLights((e.clientX / window.innerWidth) * 2 - 1, 1 - (e.clientY / window.innerHeight) * 2);
 });
 
 gl.clearColor(0, 0, 0, 1);
@@ -305,7 +327,7 @@ function frame(now) {
 	const model = mat4Mul(rotY(t * 0.4), rotX(t * 0.24));  // slow tumble
 	gl.uniformMatrix4fv(uModel, false, model);
 	gl.uniformMatrix4fv(uMvp, false, mat4Mul(proj, mat4Mul(view, model)));
-	gl.uniform3fv(uLight, lightDir);
+	gl.uniformMatrix3fv(uLights, false, lights);
 	gl.bindBuffer(gl.ARRAY_BUFFER, cubeVbo);
 	gl.enableVertexAttribArray(sceneAPos);
 	gl.vertexAttribPointer(sceneAPos, 3, gl.FLOAT, false, 24, 0);
