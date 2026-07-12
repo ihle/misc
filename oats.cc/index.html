@@ -140,7 +140,7 @@ float hash(vec3 p) {
 const float BLOCK = 3.0;    // size of each static "speckle" in device px
 const float MINRATE = 1.5;  // ticks/sec for the background (slow churn)
 const float MAXRATE = 22.0; // ticks/sec for the brightest pixels
-const float BIAS = 0.35;    // extra on-probability for a fully lit channel
+const float BIAS = 0.05;    // extra on-probability for a fully lit channel
 
 void main() {
 	vec2 uv = gl_FragCoord.xy / u_resolution;
