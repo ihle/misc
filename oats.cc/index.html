@@ -115,9 +115,9 @@ void main() {
 //  - each colour channel from the FBO drives its own update RATE: the black
 //    background churns slowly, a face lit by the red light re-randomizes its
 //    red channel ~15x faster, and so on.
-//  - each channel is still 50/50 noise regardless of rate, so any single
-//    frame is uniform RGB confetti -> a screenshot shows no cube. The eye
-//    reads the cube (and its colours) from what is *moving*.
+//  - the eye reads the cube (and its colours) mostly from what is *moving*;
+//    a density bias on lit channels makes the hues pop, at the cost of a
+//    visible colour ghost of the cube in a still frame.
 const POST_VERT = `
 attribute vec2 a_pos;
 void main() {
@@ -140,6 +140,7 @@ float hash(vec3 p) {
 const float BLOCK = 3.0;    // size of each static "speckle" in device px
 const float MINRATE = 1.5;  // ticks/sec for the background (slow churn)
 const float MAXRATE = 22.0; // ticks/sec for the brightest pixels
+const float BIAS = 0.35;    // extra on-probability for a fully lit channel
 
 void main() {
 	vec2 uv = gl_FragCoord.xy / u_resolution;
@@ -148,15 +149,19 @@ void main() {
 	// chunky noise cells so the static is visible, not sub-pixel
 	vec2 cell = floor(gl_FragCoord.xy / BLOCK);
 
-	vec3 rate = MINRATE + src * src * (MAXRATE - MINRATE);
+	vec3 gain = src * src;
+	vec3 rate = MINRATE + gain * (MAXRATE - MINRATE);
 	vec3 tick = floor(u_time * rate);
 
 	// binary static per channel; ticks are integers, so the fractional
-	// offsets keep the three channels decorrelated
+	// offsets keep the three channels decorrelated. Lit channels aren't
+	// just faster, they're denser (up to 85% on vs the background's 50%),
+	// which makes the colours pop at the cost of a visible colour ghost
+	// of the cube in a still frame.
 	vec3 v = vec3(
-		step(0.5, hash(vec3(cell, tick.r))),
-		step(0.5, hash(vec3(cell, tick.g + 0.37))),
-		step(0.5, hash(vec3(cell, tick.b + 0.71))));
+		step(0.5 - BIAS * gain.r, hash(vec3(cell, tick.r))),
+		step(0.5 - BIAS * gain.g, hash(vec3(cell, tick.g + 0.37))),
+		step(0.5 - BIAS * gain.b, hash(vec3(cell, tick.b + 0.71))));
 	gl_FragColor = vec4(v, 1.0);
 }`;
 
